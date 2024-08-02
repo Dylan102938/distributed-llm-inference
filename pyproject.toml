@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "distributed-llm-inference"
+version = "0.1.0"
+description = ""
+authors = ["Dylan Feng <dylan@sonnetai.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+torch = "^2.4.0"
+hivemind = "^1.1.10.post2"
+
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.2"
+isort = "^5.13.2"
+ruff = "^0.5.5"
+
+[tool.poetry-exec-plugin.commands]
+reformat = "isort . && ruff check --fix"
+lint = "isort . --check-only && ruff check"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
