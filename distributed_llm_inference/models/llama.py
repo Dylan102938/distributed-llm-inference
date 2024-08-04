@@ -4,13 +4,30 @@ from typing import Optional, Tuple
 import torch
 import torch.nn.functional as F
 from transformers.models.llama.modeling_llama import (LlamaAttention,
-                                                      apply_rotary_pos_emb,
-                                                      repeat_kv)
+                                                      repeat_kv, rotate_half)
+
+from distributed_llm_inference.utils.cuda import \
+    make_inference_graphed_callable
+
+
+def apply_rotary_pos_emb(q, k, cos, sin):
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed, k_embed
 
 
 class OptimizedLlamaInferenceAttention(LlamaAttention):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._rotary_graph = None
+    
+    def _optimized_apply_rotary(self, query_states, key_states, cos, sin):
+        if self._rotary_graph is None:
+            self._rotary_graph = make_inference_graphed_callable(
+                apply_rotary_pos_emb, sample_args=(query_states, key_states, cos, sin)
+            )
+        
+        return self._rotary_graph(query_states, key_states, cos, sin)
     
     def forward(
         self,
@@ -54,9 +71,13 @@ class OptimizedLlamaInferenceAttention(LlamaAttention):
             ).unsqueeze(0)
             
         cos, sin = self.rotary_emb(value_states, position_ids)
+        cos = cos.unsqueeze(0)
+        sin = sin.unsqueeze(0)
 
-        # TODO: figure out optimized apply rotary positional embeddings function with CUDA
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        if q_len == 1 and torch.is_inference_mode_enabled() and hidden_states.device.type == "cuda":
+            query_states, key_states = self._optimized_apply_rotary(query_states, key_states, cos, sin)
+        else:
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         if past_key_value is not None:
             key_states = torch.cat([past_key_value[0], key_states], dim=2)
