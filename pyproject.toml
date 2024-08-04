@@ -9,6 +9,7 @@ readme = "README.md"
 python = "^3.12"
 torch = "^2.4.0"
 hivemind = "^1.1.10.post2"
+transformers = "^4.43.3"
 
 
 [tool.poetry.group.dev.dependencies]
