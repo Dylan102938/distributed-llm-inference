@@ -3,6 +3,8 @@ from typing import Optional, Tuple
 
 import torch
 import torch.nn.functional as F
+from transformers.modeling_attn_mask_utils import \
+    _prepare_4d_causal_attention_mask
 from transformers.models.llama.modeling_llama import (LlamaAttention,
                                                       LlamaConfig,
                                                       LlamaDecoderLayer,
@@ -155,7 +157,7 @@ class OptimizedLlamaInferenceDecoderLayer(LlamaDecoderLayer):
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
 
-        bsz, q_len, _ = hidden_states.size()
+        _, q_len, _ = hidden_states.size()
 
         if q_len == 1 and torch.is_inference_mode_enabled() and hidden_states.device.type == "cuda":
             hidden_states = self._optimized_input_norm(hidden_states)
@@ -182,3 +184,52 @@ class OptimizedLlamaInferenceDecoderLayer(LlamaDecoderLayer):
         hidden_states = hidden_states + residual
 
         return (hidden_states, key_value)
+
+
+class LlamaBlock(OptimizedLlamaInferenceDecoderLayer):
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        *args,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        layer_past: Optional[Tuple[torch.Tensor]] = None,
+        use_cache: bool = False,
+        **kwargs,
+    ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
+        batch_size, seq_length, _ = hidden_states.shape
+
+        seq_length_with_past = seq_length
+        past_key_values_length = 0
+
+        past_key_value = layer_past
+        if past_key_value is not None:
+            past_key_values_length = past_key_value[0].shape[2]
+            seq_length_with_past = seq_length_with_past + past_key_values_length
+            past_key_value = self._reorder_cache_from_bloom_to_llama(past_key_value, batch_size, past_key_values_length)
+
+        assert position_ids is None
+
+        # embed positions
+        if attention_mask is None:
+            attention_mask = torch.ones(
+                (batch_size, seq_length_with_past), dtype=torch.bool, device=hidden_states.device
+            )
+        attention_mask = _prepare_4d_causal_attention_mask(
+            attention_mask=attention_mask,
+            input_shape=(batch_size, seq_length),
+            inputs_embeds=hidden_states,
+            past_key_values_length=past_key_values_length,
+        )
+
+        outputs = super().forward(
+            hidden_states,
+            *args,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_value=past_key_value,
+            use_cache=use_cache,
+            **kwargs,
+        )
+
+        return outputs
