@@ -126,7 +126,7 @@ class OptimizedLlamaInferenceDecoderLayer(LlamaDecoderLayer):
         self.self_attn = OptimizedLlamaInferenceAttention(config)
         self.mlp = LlamaMLP(config)
         self.input_layernorm = LlamaRMSNorm(self.hiden_size)
-        self.output_layernorm = LlamaRMSNorm(self.hidden_size)
+        self.post_attention_layernorm = LlamaRMSNorm(self.hidden_size)
 
         self.pre_attn_graph = None
         self.post_attn_graph = None
@@ -142,7 +142,7 @@ class OptimizedLlamaInferenceDecoderLayer(LlamaDecoderLayer):
     def _optimized_output_norm(self, hidden_states, attn_output):
         if self.post_attn_graph is None:
             self.post_attn_graph = make_inference_graphed_callable(
-                self.output_layernorm.forward, sample_args=(hidden_states, attn_output)
+                self.post_attention_layernorm.forward, sample_args=(hidden_states, attn_output)
             )
         
         return self.post_attn_graph(hidden_states, attn_output)
@@ -178,7 +178,7 @@ class OptimizedLlamaInferenceDecoderLayer(LlamaDecoderLayer):
         if q_len == 1 and torch.is_inference_mode_enabled() and hidden_states.device.type == "cuda":
             hidden_states = self._optimized_output_norm(hidden_states, residual)
         else:
-            hidden_states = self.output_layernorm(hidden_states + residual)
+            hidden_states = self.post_attention_layernorm(hidden_states + residual)
         
         hidden_states = self.mlp(hidden_states)
         hidden_states = hidden_states + residual
