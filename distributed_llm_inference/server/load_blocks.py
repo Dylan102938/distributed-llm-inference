@@ -1,5 +1,6 @@
 import json
 
+import bitsandbytes as bnb
 import safetensors
 import torch
 from accelerate.utils import set_module_tensor_to_device
@@ -67,4 +68,32 @@ def load_block(model_name: str, block_idx: int, cache_dir: str | None = None, to
         
         set_module_tensor_to_device(block, name, "cpu", value=parameters)
     
+    return block
+
+
+def _convert_to_optimized_module(module: torch.nn.Module, threshold: float) -> torch.nn.Module:
+    for name, child_module in module.named_children():
+        if len(list(child_module.children())) > 0:
+            _convert_to_optimized_module(child_module, threshold)
+        
+        if isinstance(child_module, torch.nn.Linear):
+            weights = child_module.weight.data
+            child_module._modules[name] = bnb.nn.Linear8bitLt(
+                input_features=module.in_features,
+                output_features=module.out_features,
+                threshold=threshold,
+                bias=module.bias is not None,
+                has_fp_16_weights=False
+            )
+
+            child_module._modules[name].weight.data.copy_(weights)
+
+
+def convert_to_optimized_block(block: LlamaBlock, quantize: bool = False, threshold: float = 5.0) -> LlamaBlock:
+    if quantize and not torch.cuda.is_available():
+        raise NotImplementedError("Quantization is only supported on CUDA devices")
+
+    block = _convert_to_optimized_module(block, threshold)
+    block.to(torch.device("cuda"))
+
     return block
