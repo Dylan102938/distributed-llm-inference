@@ -1,10 +1,4 @@
-from typing import Dict, List, TypedDict
-
-from hivemind import ModuleBackend
-from transformers.models.llama.modeling_llama import LlamaAttention
-
-from distributed_llm_inference.server.backend import TransformerBackend
-from distributed_llm_inference.server.task_pool import TaskPool
+from typing import TypedDict
 
 
 class Block(TypedDict):
@@ -20,9 +14,10 @@ class InferenceWorker:
         block_index_end: int,
         block_
     ):
-        self.blocks: Dict[str, TransformerBackend] = {}
-        for block in self.block_ids:
-            self.blocks[block["block_id"]] = download_pretrained_block()
+        # self.blocks: Dict[str, TransformerBackend] = {}
+        # for block in self.block_ids:
+        #     self.blocks[block["block_id"]] = load_block()
+        pass
 
     def run(self):
-
+        pass
