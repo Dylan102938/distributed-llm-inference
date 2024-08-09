@@ -73,17 +73,18 @@ def load_block(model_name: str, block_idx: int, cache_dir: str | None = None, to
 
 def _convert_to_optimized_module(module: torch.nn.Module, threshold: float) -> torch.nn.Module:
     for name, child_module in module.named_children():
+        print(name)
         if len(list(child_module.children())) > 0:
             _convert_to_optimized_module(child_module, threshold)
         
         if isinstance(child_module, torch.nn.Linear):
             weights = child_module.weight.data
             child_module._modules[name] = bnb.nn.Linear8bitLt(
-                input_features=module.in_features,
-                output_features=module.out_features,
+                input_features=child_module.in_features,
+                output_features=child_module.out_features,
                 threshold=threshold,
-                bias=module.bias is not None,
-                has_fp_16_weights=False
+                bias=child_module.bias is not None,
+                has_fp16_weights=False
             )
 
             child_module._modules[name].weight.data.copy_(weights)
