@@ -86,7 +86,8 @@ def _convert_to_optimized_module(module: torch.nn.Module, threshold: float) -> t
                 has_fp16_weights=False
             )
 
-            child_module._modules[name].weight.data.copy_(weights)
+            with torch.no_grad():
+                child_module._modules[name].weight.copy_(weights)
     
     return module
 
