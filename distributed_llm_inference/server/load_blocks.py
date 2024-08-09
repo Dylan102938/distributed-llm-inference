@@ -78,7 +78,7 @@ def _convert_to_optimized_module(module: torch.nn.Module, threshold: float) -> t
         
         if isinstance(child_module, torch.nn.Linear):
             weights = child_module.weight.data
-            child_module._modules[name] = bnb.nn.Linear8bitLt(
+            module._modules[name] = bnb.nn.Linear8bitLt(
                 input_features=child_module.in_features,
                 output_features=child_module.out_features,
                 threshold=threshold,
@@ -87,7 +87,7 @@ def _convert_to_optimized_module(module: torch.nn.Module, threshold: float) -> t
             )
 
             with torch.no_grad():
-                child_module._modules[name].weight.copy_(weights)
+                module._modules[name].weight.copy_(weights)
     
     return module
 
