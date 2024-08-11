@@ -1,3 +1,6 @@
+from hivemind.moe.server import Server
+
+
 class Server:
     def run(self):
         while True:

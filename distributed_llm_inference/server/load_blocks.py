@@ -1,6 +1,5 @@
 import json
 
-import bitsandbytes as bnb
 import safetensors
 import torch
 from accelerate.utils import set_module_tensor_to_device
@@ -72,6 +71,8 @@ def load_block(model_name: str, block_idx: int, cache_dir: str | None = None, to
 
 
 def _convert_to_optimized_module(module: torch.nn.Module, threshold: float) -> torch.nn.Module:
+    import bitsandbytes as bnb
+    
     for name, child_module in module.named_children():
         if len(list(child_module.children())) > 0:
             _convert_to_optimized_module(child_module, threshold)
