@@ -3,8 +3,6 @@ from typing import Optional, Tuple
 
 import torch
 import torch.nn.functional as F
-from transformers.modeling_attn_mask_utils import \
-    _prepare_4d_causal_attention_mask
 from transformers.models.llama.modeling_llama import (LlamaAttention,
                                                       LlamaConfig,
                                                       LlamaDecoderLayer,
@@ -37,8 +35,8 @@ class OptimizedLlamaInferenceAttention(LlamaAttention):
     def forward(
         self,
         hidden_states: torch.Tensor,
+        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
     ):
         if self.config.pretraining_tp > 1:
@@ -67,16 +65,8 @@ class OptimizedLlamaInferenceAttention(LlamaAttention):
         query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-
-        if position_ids is None:
-            past_seen_tokens = past_key_value[0].shape[2] if past_key_value is not None else 0
-            position_ids = torch.arange(
-                past_seen_tokens, past_seen_tokens + hidden_states.shape[1], device=hidden_states.device
-            ).unsqueeze(0)
             
-        cos, sin = self.rotary_emb(value_states, position_ids)
-        cos = cos.unsqueeze(0)
-        sin = sin.unsqueeze(0)
+        cos, sin = position_embeddings
 
         if q_len == 1 and torch.is_inference_mode_enabled() and hidden_states.device.type == "cuda":
             query_states, key_states = self._optimized_apply_rotary(query_states, key_states, cos, sin)
@@ -119,7 +109,7 @@ class OptimizedLlamaInferenceAttention(LlamaAttention):
         return attn_output, None, past_key_value
     
 
-class OptimizedLlamaInferenceDecoderLayer(LlamaDecoderLayer):
+class LlamaBlock(LlamaDecoderLayer):
     def __init__(self, config: LlamaConfig):
         torch.nn.Module.__init__(self)
         self.hidden_size = config.hidden_size
@@ -150,8 +140,8 @@ class OptimizedLlamaInferenceDecoderLayer(LlamaDecoderLayer):
     def forward(
         self,
         hidden_states: torch.Tensor,
+        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
@@ -167,7 +157,7 @@ class OptimizedLlamaInferenceDecoderLayer(LlamaDecoderLayer):
         hidden_states, _, key_value = self.self_attn(
             hidden_states,
             attention_mask=attention_mask,
-            position_ids=position_ids,
+            position_embeddings=position_embeddings,
             past_key_value=past_key_value,
             **kwargs
         )
@@ -184,52 +174,3 @@ class OptimizedLlamaInferenceDecoderLayer(LlamaDecoderLayer):
         hidden_states = hidden_states + residual
 
         return (hidden_states, key_value)
-
-
-class LlamaBlock(OptimizedLlamaInferenceDecoderLayer):
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        *args,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        layer_past: Optional[Tuple[torch.Tensor]] = None,
-        use_cache: bool = False,
-        **kwargs,
-    ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
-        batch_size, seq_length, _ = hidden_states.shape
-
-        seq_length_with_past = seq_length
-        past_key_values_length = 0
-
-        past_key_value = layer_past
-        if past_key_value is not None:
-            past_key_values_length = past_key_value[0].shape[2]
-            seq_length_with_past = seq_length_with_past + past_key_values_length
-            past_key_value = self._reorder_cache_from_bloom_to_llama(past_key_value, batch_size, past_key_values_length)
-
-        assert position_ids is None
-
-        # embed positions
-        if attention_mask is None:
-            attention_mask = torch.ones(
-                (batch_size, seq_length_with_past), dtype=torch.bool, device=hidden_states.device
-            )
-        attention_mask = _prepare_4d_causal_attention_mask(
-            attention_mask=attention_mask,
-            input_shape=(batch_size, seq_length),
-            inputs_embeds=hidden_states,
-            past_key_values_length=past_key_values_length,
-        )
-
-        outputs = super().forward(
-            hidden_states,
-            *args,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_value=past_key_value,
-            use_cache=use_cache,
-            **kwargs,
-        )
-
-        return outputs
