@@ -6,7 +6,7 @@ from accelerate.utils import set_module_tensor_to_device
 from transformers import AutoConfig
 from transformers.utils import cached_file
 
-from distributed_llm_inference.models.llama import LlamaBlock
+from distributed_llm_inference.models.llama.modules import LlamaBlock
 
 INDEX_FILE_PATTERNS = ["model.safetensors.index.json", "model.safetensors", "pytorch_model.bin.index.json", "pytorch_model.bin"]
 
@@ -72,7 +72,7 @@ def load_block(model_name: str, block_idx: int, cache_dir: str | None = None, to
 
 def _convert_to_optimized_module(module: torch.nn.Module, threshold: float) -> torch.nn.Module:
     import bitsandbytes as bnb
-    
+
     for name, child_module in module.named_children():
         if len(list(child_module.children())) > 0:
             _convert_to_optimized_module(child_module, threshold)

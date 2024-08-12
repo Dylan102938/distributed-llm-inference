@@ -8,7 +8,7 @@ from transformers.models.llama.modeling_llama import (LlamaConfig,
                                                       LlamaPreTrainedModel,
                                                       LlamaRotaryEmbedding)
 
-from distributed_llm_inference.server.load_blocks import load_block
+from distributed_llm_inference.utils.model import load_block
 
 
 class PartialLlamaModel(LlamaPreTrainedModel):
