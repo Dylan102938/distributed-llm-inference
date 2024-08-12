@@ -57,7 +57,7 @@ def load_block(model_name: str, block_idx: int, cache_dir: str | None = None, to
     print(f"Downloading state dict for block {block_idx}...")
     state_dict = get_block_state_dict(model_name, block_idx, cache_dir=cache_dir, token=token)
     
-    block = LlamaBlock(config)
+    block = LlamaBlock(config, layer_idx=block_idx)
 
     for name, _ in block.named_parameters():
         assert name in state_dict, f"Parameter {name} not found in state_dict"

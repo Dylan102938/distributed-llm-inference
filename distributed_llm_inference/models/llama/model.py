@@ -1,4 +1,4 @@
-from typing import List, Optional, Union
+from typing import List, Optional
 
 import torch
 from torch import nn
@@ -8,6 +8,7 @@ from transformers.models.llama.modeling_llama import (LlamaConfig,
                                                       LlamaPreTrainedModel,
                                                       LlamaRotaryEmbedding)
 
+from distributed_llm_inference.models.llama.cache import PartialLlamaSinkCache
 from distributed_llm_inference.utils.model import load_block
 
 
@@ -23,16 +24,22 @@ class PartialLlamaModel(LlamaPreTrainedModel):
     
     def forward(
         self,
+        generation_id: str,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
+        past_key_values: Optional[PartialLlamaSinkCache] = None,
         output_hidden_states: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ):
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
+
+        if cache_position is None:
+            cache_position = torch.arange(
+                0, hidden_states.shape[1], device=hidden_states.device
+            )
 
         causal_mask = self._update_causal_mask(
             attention_mask, 
@@ -41,11 +48,6 @@ class PartialLlamaModel(LlamaPreTrainedModel):
             past_key_values, 
             output_attentions=False
         )
-
-        if cache_position is None:
-            cache_position = torch.arange(
-                0, hidden_states.shape[1], device=hidden_states.device
-            )
         
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
@@ -60,9 +62,10 @@ class PartialLlamaModel(LlamaPreTrainedModel):
             
             layer_outputs = decoder_layer(
                 hidden_states,
+                generation_id,
+                position_embeddings=position_embeddings,
                 attention_mask=causal_mask,
-                past_key_values=past_key_values,
-                position_embeddings=position_embeddings
+                past_key_values=past_key_values
             )
 
             hidden_states = layer_outputs[0]

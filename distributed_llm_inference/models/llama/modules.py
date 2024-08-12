@@ -9,6 +9,7 @@ from transformers.models.llama.modeling_llama import (LlamaAttention,
                                                       LlamaMLP, LlamaRMSNorm,
                                                       repeat_kv, rotate_half)
 
+from distributed_llm_inference.models.llama.cache import PartialLlamaSinkCache
 from distributed_llm_inference.utils.cuda import \
     make_inference_graphed_callable
 
@@ -20,8 +21,8 @@ def apply_rotary_pos_emb(q, k, cos, sin):
 
 
 class OptimizedLlamaInferenceAttention(LlamaAttention):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, config: LlamaConfig, layer_idx: Optional[int] = None):
+        super().__init__(config, layer_idx)
         self._rotary_graph = None
     
     def _optimized_apply_rotary(self, query_states, key_states, cos, sin):
@@ -35,9 +36,10 @@ class OptimizedLlamaInferenceAttention(LlamaAttention):
     def forward(
         self,
         hidden_states: torch.Tensor,
+        generation_id: str,
         position_embeddings: Tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor] = None,
-        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        past_key_value: Optional[PartialLlamaSinkCache] = None,
     ):
         if self.config.pretraining_tp > 1:
             key_value_slicing = (self.num_key_value_heads * self.head_dim) // self.config.pretraining_tp
@@ -74,8 +76,13 @@ class OptimizedLlamaInferenceAttention(LlamaAttention):
             query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         if past_key_value is not None:
-            key_states = torch.cat([past_key_value[0], key_states], dim=2)
-            value_states = torch.cat([past_key_value[1], value_states], dim=2)
+            cache_kwargs = { "cos": cos, "sin": sin, "generation_id": generation_id }
+            key_states, value_states = past_key_value.update(
+                key_states, 
+                value_states, 
+                layer_idx=self.layer_idx, 
+                cache_kwargs=cache_kwargs
+            )
 
         past_key_value = (key_states, value_states)
         
@@ -110,10 +117,11 @@ class OptimizedLlamaInferenceAttention(LlamaAttention):
     
 
 class LlamaBlock(LlamaDecoderLayer):
-    def __init__(self, config: LlamaConfig):
+    def __init__(self, config: LlamaConfig, layer_idx: int):
         torch.nn.Module.__init__(self)
+        self.layer_idx = layer_idx
         self.hidden_size = config.hidden_size
-        self.self_attn = OptimizedLlamaInferenceAttention(config)
+        self.self_attn = OptimizedLlamaInferenceAttention(config, layer_idx)
         self.mlp = LlamaMLP(config)
         self.input_layernorm = LlamaRMSNorm(self.hidden_size)
         self.post_attention_layernorm = LlamaRMSNorm(self.hidden_size)
@@ -140,6 +148,7 @@ class LlamaBlock(LlamaDecoderLayer):
     def forward(
         self,
         hidden_states: torch.Tensor,
+        generation_id: str,
         position_embeddings: Tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
@@ -156,6 +165,7 @@ class LlamaBlock(LlamaDecoderLayer):
         
         hidden_states, _, key_value = self.self_attn(
             hidden_states,
+            generation_id,
             attention_mask=attention_mask,
             position_embeddings=position_embeddings,
             past_key_value=past_key_value,
