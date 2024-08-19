@@ -83,11 +83,9 @@ class OptimizedLlamaInferenceAttention(LlamaAttention):
                 layer_idx=self.layer_idx, 
                 cache_kwargs=cache_kwargs
             )
-
-        past_key_value = (key_states, value_states)
         
-        key_states = repeat_kv(key_states, self.num_heads)
-        value_states = repeat_kv(value_states, self.num_heads)
+        key_states = repeat_kv(key_states, self.num_heads // self.num_key_value_heads)
+        value_states = repeat_kv(value_states, self.num_heads // self.num_key_value_heads)
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
 
@@ -116,7 +114,7 @@ class OptimizedLlamaInferenceAttention(LlamaAttention):
         return attn_output, None, past_key_value
     
 
-class LlamaBlock(LlamaDecoderLayer):
+class OptimizedLlamaDecoderLayer(LlamaDecoderLayer):
     def __init__(self, config: LlamaConfig, layer_idx: int):
         torch.nn.Module.__init__(self)
         self.layer_idx = layer_idx

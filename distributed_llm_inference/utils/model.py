@@ -1,4 +1,5 @@
 import json
+from typing import List
 
 import safetensors
 import torch
@@ -6,7 +7,8 @@ from accelerate.utils import set_module_tensor_to_device
 from transformers import AutoConfig
 from transformers.utils import cached_file
 
-from distributed_llm_inference.models.llama.modules import LlamaBlock
+from distributed_llm_inference.models.llama.model import LlamaBlock
+from distributed_llm_inference.models.llama.modules import LlamaDecoderLayer
 
 INDEX_FILE_PATTERNS = ["model.safetensors.index.json", "model.safetensors", "pytorch_model.bin.index.json", "pytorch_model.bin"]
 
@@ -48,25 +50,43 @@ def get_block_state_dict(repo: str, block_idx: int, cache_dir: str | None = None
         state_dict.update(sharded_state_dict)
     
     return state_dict
-    
 
-def load_block(model_name: str, block_idx: int, cache_dir: str | None = None, token: str | bool = False) -> LlamaBlock:
-    print(f"Downloading model config for {model_name}...")
-    config = AutoConfig.from_pretrained(model_name, token=token)
-    
-    print(f"Downloading state dict for block {block_idx}...")
-    state_dict = get_block_state_dict(model_name, block_idx, cache_dir=cache_dir, token=token)
-    
-    block = LlamaBlock(config, layer_idx=block_idx)
 
-    for name, _ in block.named_parameters():
+def _load_layer(
+    model_name: str, 
+    layer: LlamaDecoderLayer, 
+    layer_idx: int, cache_dir: str | None = None,
+    token: str | bool = False
+) -> LlamaBlock:
+    print(f"Downloading state dict for block {layer_idx}...")
+    state_dict = get_block_state_dict(model_name, layer_idx, cache_dir=cache_dir, token=token)
+    
+    for name, _ in layer.named_parameters():
         assert name in state_dict, f"Parameter {name} not found in state_dict"
         parameters = state_dict[name]
         if not str(parameters.dtype).startswith(("torch.uint", "torch.int", "torch.bool")):
             parameters = parameters.to(torch.float16)
         
-        set_module_tensor_to_device(block, name, "cpu", value=parameters)
+        set_module_tensor_to_device(layer, name, "cpu", value=parameters)
     
+    return layer
+
+
+def load_block(
+    model_name: str, 
+    layer_ids: List[int],
+    use_quantized: bool = False,
+    cache_dir: str | None = None, 
+    token: str | bool = False
+) -> LlamaBlock:
+    print(f"Downloading model config for {model_name}...")
+    config = AutoConfig.from_pretrained(model_name, token=token)
+    
+    block = LlamaBlock(config, layer_ids=layer_ids)
+    
+    for layer in block.layers:
+        _load_layer(model_name, layer, layer.layer_idx, cache_dir, token)
+
     return block
 
 

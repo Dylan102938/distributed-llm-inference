@@ -9,17 +9,17 @@ from transformers.models.llama.modeling_llama import (LlamaConfig,
                                                       LlamaRotaryEmbedding)
 
 from distributed_llm_inference.models.llama.cache import PartialLlamaSinkCache
-from distributed_llm_inference.utils.model import load_block
+from distributed_llm_inference.models.llama.modules import \
+    OptimizedLlamaDecoderLayer
 
 
-class PartialLlamaModel(LlamaPreTrainedModel):
-    def __init__(self, layer_ids: List[int], config: LlamaConfig):
+class LlamaBlock(LlamaPreTrainedModel):
+    def __init__(self, config: LlamaConfig, layer_ids: List[int]):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
-        layer_list = [load_block(config.name_or_path, idx) for idx in layer_ids]
-        self.layers = nn.ModuleList(layer_list)
+        self.layers = nn.ModuleList([OptimizedLlamaDecoderLayer(config, layer_idx) for layer_idx in layer_ids])
         self.rotary_emb = LlamaRotaryEmbedding(config=self.config)
     
     def forward(
@@ -28,7 +28,7 @@ class PartialLlamaModel(LlamaPreTrainedModel):
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[PartialLlamaSinkCache] = None,
+        past_key_value: Optional[PartialLlamaSinkCache] = None,
         output_hidden_states: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ):
@@ -45,7 +45,7 @@ class PartialLlamaModel(LlamaPreTrainedModel):
             attention_mask, 
             hidden_states, 
             cache_position, 
-            past_key_values, 
+            past_key_value, 
             output_attentions=False
         )
         
@@ -65,7 +65,7 @@ class PartialLlamaModel(LlamaPreTrainedModel):
                 generation_id,
                 position_embeddings=position_embeddings,
                 attention_mask=causal_mask,
-                past_key_values=past_key_values
+                past_key_value=past_key_value
             )
 
             hidden_states = layer_outputs[0]
